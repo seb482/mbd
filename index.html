@@ -492,6 +492,7 @@ body.hide-money input[inputmode="decimal"]{filter:blur(6px)}
 .bd-news{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
 .bd-news a{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;color:inherit;text-decoration:none;background:var(--surface)}
 .bd-news a:hover{border-color:var(--blue)}
+.bd-nw{position:relative;display:flex}.bd-nw>a{flex:1;min-width:0;padding-right:44px}.bd-fav{position:absolute;top:4px;right:4px;width:36px;height:36px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:20px;line-height:1;cursor:pointer}.bd-fav:hover{background:var(--surface-2);color:var(--orange)}.bd-fav[aria-pressed=true]{color:var(--orange)}
 /* nav */
 .nav{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:22px;overflow-x:auto}
 .nav button{background:none;border:0;padding:10px 14px;font-weight:700;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-1px;white-space:nowrap;display:flex;align-items:center;gap:8px}
@@ -2811,6 +2812,7 @@ async function init() {
   db.doc('board/weather').onSnapshot(s => { S.weather = s.exists ? s.data() : null; S.weatherReady = true; schedule(); }, onErr);
   db.doc('board/veille').onSnapshot(s => { S.veille = s.exists ? s.data() : null; schedule(); }, onErr);
   db.doc('board/news').onSnapshot(s => { S.news = s.exists ? s.data() : null; schedule(); }, onErr);
+  db.doc('board/newsFav').onSnapshot(s => { S.newsFav = s.exists ? s.data() : null; schedule(); }, onErr);
   db.doc('visibilite/etat').onSnapshot(s => { S.visibilite = s.exists ? s.data() : {}; schedule(); }, onErr);
   for (const c of ['docs', 'expenses', 'services', 'freelancers', 'years', 'tri', 'fiscal', 'history', 'contacts', 'projects', 'templates', 'notes', 'pdocs', 'livrables', 'lieux', 'matos', 'checklists', 'bilans', 'refs', 'avis', 'produits', 'commandes', 'learnlog', 'demandes', 'notifs', 'docu', 'jeux', 'jeuxrep', 'modifs', 'rencontres']) {
     db.collection(c).onSnapshot(q => {
@@ -2895,7 +2897,7 @@ const BD_DEFIS = [
   ['Général', 'Envoie un mot d’encouragement à un artiste ou un artisan de ta région.'],
   ['Général', 'Ouvre un projet terminé et note une chose que tu ferais autrement aujourd’hui.'],
 ];
-Object.assign(S, { noteQ: '', noteFilter: 'toutes', board: {}, news: null, bdOff: 0, bdDraft: '', bdIdea: false, bdSprint: { min: 25, left: 1500, run: false } });
+Object.assign(S, { noteQ: '', noteFilter: 'toutes', board: {}, news: null, newsFav: null, bdOff: 0, bdDraft: '', bdIdea: false, bdSprint: { min: 25, left: 1500, run: false } });
 const bdIso = d => d.toLocaleDateString('fr-CA');
 const bdHM = d => d.toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' });
 function bdDoy(d = new Date()) { return Math.floor((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(d.getFullYear(), 0, 0)) / 864e5); }
@@ -3197,13 +3199,23 @@ function bdTasks() {
   }
   return out || '<div class="empty" style="padding:16px">Aucune tâche ouverte. Ajoute-en dans la fiche d’un projet en cours.</div>';
 }
+const newsKey = x => x.u || x.t || '';
+async function newsToggleFav(k) {
+  const cur = (S.newsFav && S.newsFav.items) || [], i = cur.findIndex(x => newsKey(x) === k); let items;
+  if (i >= 0) items = cur.filter((_, j) => j !== i);
+  else { const n = S.news || {}, x = [...(n.items || []), ...(n.monde || [])].find(y => newsKey(y) === k); if (!x) return; items = [{ t: x.t, s: x.s || '', u: x.u || '', savedAt: new Date().toISOString() }, ...cur]; }
+  const prev = S.newsFav; S.newsFav = { items }; render();
+  if (await save('board/newsFav', { items })) toast(i >= 0 ? 'Retiré des favoris' : 'Ajouté aux favoris'); else { S.newsFav = prev; render(); }
+}
 function bdNews() {
   const n = S.news || {}, items = n.items || [], monde = n.monde || [];
   const links = [['Radio-Canada', 'https://ici.radio-canada.ca/'], ['La Presse', 'https://www.lapresse.ca/'], ['Le Devoir', 'https://www.ledevoir.com/'], ['Le Monde', 'https://www.lemonde.fr/international/'], ['France 24', 'https://www.france24.com/fr/']];
-  const grid = arr => '<div class="bd-news">' + arr.map(x => '<a href="' + esc(x.u || '#') + '" target="_blank" rel="noopener"><strong>' + esc(x.t) + '</strong><span class="small muted">' + esc(x.s || '') + '</span></a>').join('') + '</div>';
+  const favs = (S.newsFav && S.newsFav.items) || [], favKeys = new Set(favs.map(newsKey));
+  const grid = arr => '<div class="bd-news">' + arr.map(x => { const k = newsKey(x), on = favKeys.has(k); return '<div class="bd-nw"><a href="' + esc(x.u || '#') + '" target="_blank" rel="noopener"><strong>' + esc(x.t) + '</strong><span class="small muted">' + esc(x.s || '') + '</span></a><button type="button" class="bd-fav" data-b="news-fav" data-k="' + esc(k) + '" aria-pressed="' + on + '" aria-label="' + (on ? 'Retirer des favoris' : 'Ajouter aux favoris') + '" title="' + (on ? 'Retirer des favoris' : 'Ajouter aux favoris') + '">' + (on ? '★' : '☆') + '</button></div>'; }).join('') + '</div>';
   const when = n.updatedAt ? new Date(n.updatedAt) : null, whenTxt = when && !isNaN(when) ? when.toLocaleString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : (n.date ? fmtDateL(n.date) : '');
   return '<div class="panel panel-pad bd-span12"><div class="spread" style="margin-bottom:8px"><h3 style="margin:0">Actualités</h3>' + (whenTxt ? '<span class="small muted">Mises à jour : ' + esc(whenTxt) + '</span>' : '') + '</div>' +
-    '<h4 style="margin:6px 0 6px;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Québec</h4>' + (items.length ? grid(items) : '<p class="muted" style="margin:0 0 8px">Les titres n’ont pas encore été chargés. Touche « Rafraîchir maintenant ».</p>') +
+    (favs.length ? '<h4 style="margin:6px 0 6px;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">★ Favoris (' + favs.length + ')</h4>' + grid(favs) : '') +
+    '<h4 style="margin:14px 0 6px;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">Québec</h4>' + (items.length ? grid(items) : '<p class="muted" style="margin:0 0 8px">Les titres n’ont pas encore été chargés. Touche « Rafraîchir maintenant ».</p>') +
     (monde.length ? '<h4 style="margin:14px 0 6px;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">International</h4>' + grid(monde) : '') +
     '<div class="row" style="margin-top:10px">' + links.map(([l, u]) => '<a class="btn" href="' + u + '" target="_blank" rel="noopener">' + l + '</a>').join('') + '<button class="btn" data-b="news-refresh" id="newsBtn" title="Va chercher les dernières actualités préparées automatiquement (environ à 6 h et 15 h).">Rafraîchir maintenant</button></div></div>';
 }
@@ -3357,6 +3369,7 @@ document.addEventListener('click', async e => {
   else if (a === 'devis-ok') { const d = S.docs.get(b.dataset.id); if (d) { const { id: _i, ...x } = d; if (await save('docs/' + d.id, { ...x, status: 'accepte', acceptedAt: today(), updatedAt: new Date().toISOString() })) toast('Devis ' + d.number + ' marqué accepté'); } }
   else if (a === 'notes-back') go('board');
   else if (a === 'note-filter') { S.noteFilter = b.dataset.f; render(); }
+  else if (a === 'news-fav') { e.preventDefault(); await newsToggleFav(b.dataset.k); }
   else if (a === 'news-refresh') { const bt = $('#newsBtn'); if (bt) { bt.disabled = true; bt.textContent = 'Recherche des nouvelles…'; } const r = await echNews(true); if (bt) { bt.disabled = false; bt.textContent = 'Rafraîchir maintenant'; } toast(r === 'ok' ? 'Actualités mises à jour' : r === 'deja' ? 'Déjà à jour. La prochaine mise à jour automatique passe vers 6 h ou 15 h.' : r === 'aucun' ? 'Aucune nouvelle édition trouvée pour le moment.' : 'Impossible de lire les actualités (Google Drive non relié ici).'); }
   else if (a === 'cal-toggle') { S.bdCalOpen = !S.bdCalOpen; render(); }
   else if (a === 'ev-st') { e.preventDefault(); await evSetStatus(b.dataset.calid, b.dataset.eid, b.dataset.st); }
