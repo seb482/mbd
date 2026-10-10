@@ -5282,6 +5282,9 @@ async function echMeteo(force) {
   return 'erreur';
 }
 setTimeout(() => { echMeteo(false); }, 8000); setInterval(() => { echMeteo(false); }, 20 * 60e3);
+/* iPhone : la PWA est suspendue la nuit et les minuteurs ne tournent plus; au retour au premier plan on redemande nouvelles, veille et météo (limitées à 1 fois / 25 min). */
+function echResume() { if (document.visibilityState === 'hidden') return; setTimeout(() => { echNews(false); echVeille(false); echMeteo(false); }, 1500); }
+document.addEventListener('visibilitychange', echResume); window.addEventListener('pageshow', echResume); window.addEventListener('online', echResume);
 function kpiOpen(k) {
   const y = S.year, s = summary(y), esc2 = esc;
   const R = (t, sub, amt, attrs) => '<div ' + (attrs || '') + ' style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--line);' + (attrs ? 'cursor:pointer' : '') + '"><div style="min-width:0"><strong>' + t + '</strong><br><span class="muted small">' + sub + '</span></div><div class="money" style="white-space:nowrap;text-align:right">' + amt + '</div></div>';
