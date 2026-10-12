@@ -4155,6 +4155,28 @@ const TIPS = [
   ['Écriture', 'Un bon titre promet une question ou une image, pas un thème.'],
   ['Créativité', 'Refais un plan que tu admires, à ta façon, avec ce que tu as sous la main. Tu apprends plus qu’en le regardant dix fois.'],
   ['Créativité', 'Donne-toi une contrainte pour un mini-projet : un seul objectif, une seule journée, trois plans. Tu inventes plus vite.'],
+  ['Documentaire', 'Cherche la scène où quelqu’un hésite ou se contredit. C’est là que le personnage devient vivant.'],
+  ['Documentaire', 'Un lieu qui revient trois fois dans le film devient un personnage. Choisis-le avec soin.'],
+  ['Documentaire', 'Ne tourne pas tout : décide à l’avance les trois moments sans lesquels le film n’existe pas.'],
+  ['Entrevue', 'Prépare dix questions, puis n’en pose que trois. Le reste vient de l’écoute.'],
+  ['Entrevue', 'Laisse la personne se préparer sans caméra : quelques minutes de causerie détendent plus qu’une consigne.'],
+  ['Entrevue', 'Évite les questions fermées. « Est-ce que c’était dur ? » donne un oui ; « Comment c’était ? » donne une histoire.'],
+  ['Son', 'Enregistre des sons seuls (pas, porte, vent, eau, outils). Ils recouvrent les coupes et donnent de la texture.'],
+  ['Son', 'Teste le niveau avec la voix la plus forte de la personne, pas seulement le « bonjour » du début.'],
+  ['Lumière', 'Place ton sujet à une fenêtre en biais plutôt que de face : les volumes du visage ressortent.'],
+  ['Lumière', 'Un contre-jour sans réflecteur donne une silhouette. Ouvre l’exposition ou ajoute du remplissage.'],
+  ['Image', 'Avant de déclencher, regarde les quatre coins du cadre : fils, poteaux, objets qui dépassent.'],
+  ['Image', 'Filme chaque lieu avec un plan de situation, même court. Il aidera à orienter le spectateur au montage.'],
+  ['Drone', 'Fais une liste de contrôle avant chaque vol : batteries, cartes, hélices, GPS, zone et météo.'],
+  ['Montage', 'Laisse reposer ton montage une nuit avant de décider. Les faiblesses sautent aux yeux le lendemain.'],
+  ['Montage', 'Ouvre le film sur une image ou une phrase forte, pas sur un titre. Le titre peut venir après.'],
+  ['Éthique', 'Si quelqu’un hésite à être filmé, n’insiste pas. Un « non » respecté ouvre parfois un « oui » plus tard.'],
+  ['Production', 'Prépare une feuille de tournage la veille : lieux, heures, contacts, matériel. Ça libère la tête sur place.'],
+  ['Production', 'Garde un nommage constant pour tes fichiers (date_projet_plan). Retrouver vite, c’est gagner des heures.'],
+  ['Écriture', 'Remplace les adjectifs par un fait précis : « un vieux bateau » devient « un bateau repeint onze fois ».'],
+  ['Écriture', 'Écris le synopsis en trois phrases : début, tension, fin. Si une phrase est floue, le film l’est aussi.'],
+  ['Créativité', 'Regarde un film dans un genre que tu n’aimes pas et note une seule idée à emprunter.'],
+  ['Créativité', 'Fais un plan par jour pendant une semaine, toujours au même endroit. Tu verras ce que tu avais manqué.'],
 ];
 const RESSOURCES = [
   ['Livres', [['Documentary Storytelling', 'Sheila Curran Bernard', 'Écriture et structure du documentaire, avec des exemples de films (en anglais).'], ['Directing the Documentary', 'Michael Rabiger', 'Un classique sur la préparation, l’entrevue, le tournage et le montage (en anglais).'], ['Introduction to Documentary', 'Bill Nichols', 'Les grandes façons de faire un documentaire, utile pour choisir ton point de vue (en anglais).'], ['Le documentaire, un autre cinéma', 'Guy Gauthier', 'Une histoire et une analyse du documentaire, en français.'], ['Story', 'Robert McKee', 'La structure du récit. Écrit pour la fiction, mais très utile pour donner une forme au réel.']]],
@@ -4165,8 +4187,20 @@ const RESSOURCES = [
 function lessonById(id) { for (const p of PARCOURS) for (const l of p.lecons) if (l.id === id) return [p, l]; return [null, null]; }
 function learnDone() { return (S.learnP && S.learnP.done) || {}; }
 function learnStreak() { const d = new Set([...S.learnlog.values()].map(x => x.date)); let n = 0; const c = new Date(); if (!d.has(bdIso(c))) c.setDate(c.getDate() - 1); while (d.has(bdIso(c))) { n++; c.setDate(c.getDate() - 1); } return n; }
+/* Astuces : paquet mélangé, aucune répétition avant d’avoir tout vu. La carte du jour reste la même la journée; « Une autre astuce » passe à la suivante. */
+function tipPick(step) {
+  let st = null; try { st = JSON.parse(localStorage.getItem('mbd.tips') || 'null'); } catch (e) {}
+  const n = TIPS.length, d = today();
+  if (!st || !Array.isArray(st.order) || st.order.length !== n || st.order.some(i => i >= n)) st = { order: [], pos: 0, day: '' };
+  const shuffle = last => { const a = TIPS.map((_, i) => i); for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } if (a[0] === last && n > 1) [a[0], a[1]] = [a[1], a[0]]; return a; };
+  if (!st.order.length) st = { order: shuffle(-1), pos: 0, day: d };
+  let adv = step | 0; if (st.day !== d) { adv += 1; st.day = d; }
+  while (adv-- > 0) { st.pos++; if (st.pos >= n) st = { order: shuffle(st.order[n - 1]), pos: 0, day: st.day }; }
+  try { localStorage.setItem('mbd.tips', JSON.stringify(st)); } catch (e) {}
+  return st.order[st.pos];
+}
 function viewLearn() {
-  const doy = bdDoy(), tip = TIPS[(doy * 3 + S.lOff) % TIPS.length], done = learnDone();
+  const tip = TIPS[tipPick(0)], done = learnDone();
   const mStart = today().slice(0, 7), logs = [...S.learnlog.values()].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
   const minMonth = logs.filter(l => (l.date || '').startsWith(mStart)).reduce((a, l) => a + parseNum(l.min), 0), streak = learnStreak();
   const goal = (S.learnP && S.learnP.goal) || '';
@@ -4222,7 +4256,7 @@ function openLesson(id) {
 document.addEventListener('change', async e => { const t = e.target; if (t && t.id === 'lg_goal') { const P = { ...(S.learnP || {}), goal: t.value.trim() }; S.learnP = P; await save('learn/progress', P); toast('Objectif enregistré'); } });
 document.addEventListener('click', async e => {
   const b = e.target.closest && e.target.closest('[data-k]'); if (!b) return; const a = b.dataset.k;
-  if (a === 'tip-next') { S.lOff++; render(); } else if (a === 'lp-open') { S.lParc = b.dataset.id; render(); } else if (a === 'lp-close') { S.lParc = ''; render(); } else if (a === 'lesson-open') openLesson(b.dataset.id);
+  if (a === 'tip-next') { tipPick(1); render(); } else if (a === 'lp-open') { S.lParc = b.dataset.id; render(); } else if (a === 'lp-close') { S.lParc = ''; render(); } else if (a === 'lesson-open') openLesson(b.dataset.id);
   else if (a === 'log-add') { const m = parseNum($('#lg_min').value), tx = $('#lg_txt').value.trim(); if (!m) { $('#lg_min').focus(); return toast('Entre le nombre de minutes.'); } const now = new Date().toISOString(); if (await save('learnlog/' + newId('learnlog'), { date: today(), min: m, topic: $('#lg_topic').value, text: tx, createdAt: now })) toast('Ajouté au journal'); }
   else if (a === 'log-del') { if (await remove('learnlog/' + b.dataset.id)) toast('Retiré du journal'); }
 });
