@@ -4206,6 +4206,7 @@ function tipPick(step) {
   return st.order[st.pos];
 }
 function viewLearn() {
+  setTimeout(tipsRenewAI, 0);
   const tip = allTips()[tipPick(0)], done = learnDone();
   const mStart = today().slice(0, 7), logs = [...S.learnlog.values()].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
   const minMonth = logs.filter(l => (l.date || '').startsWith(mStart)).reduce((a, l) => a + parseNum(l.min), 0), streak = learnStreak();
@@ -4840,12 +4841,68 @@ async function echDemande(kind, count, pct, existing, extra) {
 async function echWriteRenouvellements() {
   if (S.loaded.jeux && S.loaded.jeuxrep) {
     const all = jxBank(), used = all.filter(q => jxRep(q.i)).length;
-    if (all.length && used / all.length >= RENOUV) { const ids = all.map(q => q.i).sort(); await echDemande('jeux', all.length, used / all.length, all.map(q => [q.i, String(q.q || '').slice(0, 60)]), { lastId: ids[ids.length - 1] }); }
+    if (all.length && (used / all.length >= RENOUV || jxNeeds())) { const ids = all.map(q => q.i).sort(); await echDemande('jeux', all.length, used / all.length, all.map(q => [q.i, String(q.q || '').slice(0, 60)]), { lastId: ids[ids.length - 1] }); }
   }
   if (S.loaded.tipsX) {
     const T = allTips(), st = tipState();
     if (st && Array.isArray(st.order) && st.order.length === T.length && (st.pos + 1) / T.length >= RENOUV) await echDemande('astuces', T.length, (st.pos + 1) / T.length, T.map(t => [t[0], String(t[1]).slice(0, 60)]), {});
   }
+}
+/* ---------- Renouvellement dans l'app (filet de sécurité, sans routine) : si Claude est disponible, l'app écrit elle-même de nouvelles astuces et questions quand le stock baisse ---------- */
+async function tipsAdd(raw, batch) {
+  const have = new Set(allTips().map(x => String(x[1]).trim().toLowerCase()));
+  const add = (Array.isArray(raw) ? raw : []).filter(x => Array.isArray(x) && typeof x[0] === 'string' && typeof x[1] === 'string' && x[1].trim().length >= 20 && x[1].length <= 300).map(x => [x[0].trim().slice(0, 30), x[1].trim()]).filter(x => { const k = x[1].toLowerCase(); if (have.has(k)) return false; have.add(k); return true; }).slice(0, 60);
+  if (!add.length) return 0;
+  const items = [...(S.tipsX || []), ...add].slice(-300);
+  if (!(await save('learn/astuces', { items, updatedAt: new Date().toISOString() }))) return 0;
+  S.tipsX = items; await notifAdd({ id: 'astuces-' + (batch || today().slice(0, 7)) + '-' + items.length, type: 'info', title: 'Nouvelles astuces dans Apprendre', body: add.length + ' nouvelles astuces ont été ajoutées.' }); return add.length;
+}
+function aiJson(txt) { const t = String(txt || ''), a = t.search(/[\[{]/); if (a < 0) return null; const open = t[a], close = open === '[' ? ']' : '}', b = t.lastIndexOf(close); if (b <= a) return null; try { return JSON.parse(t.slice(a, b + 1)); } catch (e) { return null; } }
+function renewGate(key) { let t = 0; try { t = +localStorage.getItem(key) || 0; } catch (e) {} if (Date.now() - t < 3 * 3600e3) return false; try { localStorage.setItem(key, String(Date.now())); } catch (e) {} return true; }
+async function tipsRenewAI() {
+  const smp = sample; if (!smp || S._tipGen || !S.loaded.tipsX || !db || readOnly) return;
+  const T = allTips(), st = tipState(); if (!st || !Array.isArray(st.order) || st.order.length !== T.length || (st.pos + 1) / T.length < RENOUV || !renewGate('mbd.tipgen')) return;
+  S._tipGen = true;
+  try {
+    const cats = [...new Set(T.map(t => t[0]))].join(', '), ex = T.map(t => '- ' + t[1].slice(0, 70)).join('\n');
+    const r = await smp('Tu écris pour l’onglet « Apprendre » de Sébastien Rioux, vidéaste et photographe documentaire du Bas-Saint-Laurent. Écris 30 NOUVELLES astuces courtes (tutoiement, concrètes, une idée chacune, 60 à 220 caractères, utiles sur le terrain) sur la vidéo documentaire, l’entrevue, le son, la lumière, l’image, le drone, le montage, l’éthique, la production, l’écriture, la créativité et la photo. Catégories possibles : ' + cats + '. Ne répète jamais le sens des astuces existantes ci-dessous. Réponds UNIQUEMENT par un tableau JSON de paires [\"Catégorie\",\"texte\"], rien autour.\n\nAstuces existantes :\n' + ex, { modelTier: 'complex', cache: false });
+    const n = await tipsAdd(aiJson(r && r.text), today().slice(0, 7)); if (n) { toast(n + ' nouvelles astuces ajoutées'); render(); }
+  } catch (e) { console.warn(e); } finally { S._tipGen = false; }
+}
+async function jxAddBatch(raw, batch) {
+  const have = new Set(jxBank().map(q => String(q.q || '').trim().toLowerCase())); let next = Math.max(0, ...jxBank().map(q => parseInt(String(q.i).replace(/\D/g, ''), 10) || 0));
+  const qs = [];
+  for (const q of (Array.isArray(raw) ? raw : [])) {
+    if (!q || typeof q.q !== 'string' || q.q.length < 10 || !JX_CAT[q.c] || ![1, 2, 3].includes(q.l) || have.has(q.q.trim().toLowerCase())) continue;
+    const o = { t: q.t, c: q.c, g: String(q.g || '').slice(0, 40), l: q.l, q: q.q.trim(), e: String(q.e || '').slice(0, 600) };
+    if (q.t === 'qcm') { if (!Array.isArray(q.o) || q.o.length !== 4 || !q.o.every(x => typeof x === 'string' && x) || !Number.isInteger(q.a) || q.a < 0 || q.a > 3) continue; o.o = q.o; o.a = q.a; }
+    else if (q.t === 'vf') { if (typeof q.a !== 'boolean') continue; o.a = q.a; }
+    else if (q.t === 'libre') { if (!Array.isArray(q.k) || q.k.length < 2) continue; o.k = q.k.filter(x => typeof x === 'string').slice(0, 6); }
+    else continue;
+    have.add(o.q.toLowerCase()); o.i = 'J' + String(++next).padStart(4, '0'); qs.push(o); if (qs.length >= 80) break;
+  }
+  if (!qs.length) return 0;
+  const nums = [...(S.jeux || new Map()).keys()].map(k => parseInt(String(k).replace(/\D/g, ''), 10) || 0), did = 'p' + String((nums.length ? Math.max(...nums) : 0) + 1).padStart(2, '0');
+  const data = { n: qs.length, from: qs[0].i, to: qs[qs.length - 1].i, batch, qs };
+  if (!(await save('jeux/' + did, data))) return 0;
+  if (!S.jeux) S.jeux = new Map(); S.jeux.set(did, { id: did, ...data }); await notifAdd({ id: 'jeux-' + batch + '-' + did, type: 'info', title: 'Nouvelles questions dans Jeux du réal', body: qs.length + ' nouvelles questions ont été ajoutées.' }); return qs.length;
+}
+/* Besoin : 75 % de la banque déjà jouée, ou un thème / un niveau qui n'a presque plus de questions neuves. */
+function jxNeeds() {
+  const all = jxBank(); if (!all.length) return null; const fresh = all.filter(q => !jxRep(q.i)), need = [];
+  if (fresh.length / all.length <= 1 - RENOUV) need.push('toutes');
+  for (const c of Object.keys(JX_CAT)) { const tot = all.filter(q => q.c === c), nf = tot.filter(q => !jxRep(q.i)).length; if (!tot.length || nf < 8 || nf / tot.length <= 1 - RENOUV) need.push(c); }
+  return need.length ? need : null;
+}
+async function jxRenewAI() {
+  const smp = sample; if (!smp || S._jxGen || !S.loaded.jeux || !S.loaded.jeuxrep || !db || readOnly) return;
+  const need = jxNeeds(); if (!need || !renewGate('mbd.jxgen')) return;
+  S._jxGen = true;
+  try {
+    const all = jxBank(), cats = (need.includes('toutes') ? Object.keys(JX_CAT) : need.filter(c => JX_CAT[c])), ex = all.map(q => '- ' + String(q.q).slice(0, 60)).join('\n');
+    const r = await smp('Tu écris des questions de quiz pour « Jeux du réal », outil d’apprentissage de Sébastien Rioux, vidéaste et photographe documentaire du Bas-Saint-Laurent (Québec). Écris 40 NOUVELLES questions, en français québécois soigné, exactes et vérifiables (n’invente aucun fait; si tu n’es pas certain, choisis un autre sujet), réparties surtout sur ces thèmes : ' + cats.map(c => c + ' = ' + JX_CAT[c]).join(', ') + '. Niveaux l : 1 débutant, 2 intermédiaire, 3 avancé. Environ 40 % qcm, 40 % vf, 20 % libre. Ne répète jamais une question existante ni son sujet précis. Réponds UNIQUEMENT par un tableau JSON, rien autour. Chaque élément : {"t":"qcm|vf|libre","c":"S|D|R|T|H","g":"sous-thème court","l":1,"q":"question","o":["4 choix (qcm seulement)"],"a":(qcm : index 0 à 3 de la bonne réponse, varié; vf : true ou false; libre : omets),"e":"explication de 1 à 3 phrases","k":["3 à 5 éléments attendus (libre seulement)"]}.\n\nQuestions existantes :\n' + ex, { modelTier: 'complex', cache: false });
+    const n = await jxAddBatch(aiJson(r && r.text), today().slice(0, 7)); if (n) { toast(n + ' nouvelles questions ajoutées'); render(); }
+  } catch (e) { console.warn(e); } finally { S._jxGen = false; }
 }
 /* Relevés bancaires et Visa : la routine infonuagique lit les PDF déposés dans Drive (dossier « Relevés à traiter ») et dépose « reception-releves-… .json »; l'app range les transactions à trier et marque les factures payées. */
 const triId = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
@@ -4942,11 +4999,7 @@ async function echApply(m, fileId) {
     if (await save('jeux/' + did, data)) { if (!S.jeux) S.jeux = new Map(); S.jeux.set(did, { id: did, ...data }); await notifAdd({ id: 'jeux-' + m.batch, type: 'info', title: 'Nouvelles questions dans Jeux du réal', body: 'Le lot de ' + m.batch + ' ajoute des questions au module Jeux du réal (Studio, onglet Jeux).' }); }
   } else if (t === 'astuces') {
     /* lot d'astuces pour Apprendre, écrit par la routine infonuagique quand 75 % du paquet est tiré */
-    const have = new Set(allTips().map(x => String(x[1]).trim().toLowerCase()));
-    const add = (Array.isArray(m.items) ? m.items : []).filter(x => Array.isArray(x) && typeof x[0] === 'string' && typeof x[1] === 'string' && x[1].trim().length >= 20 && x[1].length <= 300).map(x => [x[0].trim().slice(0, 30), x[1].trim()]).filter(x => { const k = x[1].toLowerCase(); if (have.has(k)) return false; have.add(k); return true; }).slice(0, 60);
-    if (!add.length) return;
-    const items = [...(S.tipsX || []), ...add].slice(-300);
-    if (await save('learn/astuces', { items, updatedAt: now })) { S.tipsX = items; await notifAdd({ id: 'astuces-' + (m.batch || now.slice(0, 7)) + '-' + items.length, type: 'info', title: 'Nouvelles astuces dans Apprendre', body: add.length + ' nouvelles astuces ont été ajoutées.' }); }
+    await tipsAdd(m.items, m.batch);
   } else if (t === 'suivi') {
     /* nouveau message dans un fil déjà traité : une note et une notification, jamais de second devis ni de second HOLD */
     if (!m.threadId) return; const nid = 'suivi-' + m.threadId + '-' + String(m.date || today()).replace(/-/g, ''); if (S.notes.has(nid)) return;
@@ -5603,7 +5656,7 @@ function jxEcrites() {
     (list.length ? '<div class="row" style="margin-top:8px"><button class="btn primary" data-action="jx-analyse">Analyser mes réponses avec Claude</button></div>' : '');
 }
 function viewJeux() {
-  const v = S.jx.view;
+  const v = S.jx.view; if (v === 'home' || v === 'end') setTimeout(jxRenewAI, 0);
   return '<div class="jx">' + (v === 'play' ? jxPlay() : v === 'end' ? jxEnd() : v === 'ecrites' ? jxEcrites() : jxHome()) + '</div>';
 }
 async function jxAnalyse(btn) {
