@@ -3703,7 +3703,8 @@ function csDraw() {
   </div>
   <p class="muted small" style="margin:12px 0 4px">Texte de la fiche — modifie-le librement (ajoute l'équipe, le matériel, retire ce qui ne s'applique pas). « Régénérer » recalcule météo/marée/lumière à partir de la date et du lieu, en écrasant tes changements.</p>
   <textarea id="cs_text" rows="16" style="width:100%;font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;resize:vertical">${esc(CS.text)}</textarea>`;
-  openSheet('Fiche de tournage', body, '<div class="row"><button class="btn" id="cs_regen">Régénérer les infos calculées</button><button class="btn" id="cs_pdf">Télécharger en PDF</button></div><div class="row"><button class="btn primary" data-close>Fermer</button></div>', () => csSave());
+  openSheet('Fiche de tournage', body, '<div class="row"><button class="btn" id="cs_regen">Régénérer les infos calculées</button><button class="btn" id="cs_pdf">Télécharger en PDF</button></div><div class="row"><button class="btn primary" data-close>Fermer</button></div>');
+  sheetSaver = csSave;
   $('#cs_date').oninput = e => { CS.date = e.target.value; };
   $('#cs_heure').oninput = e => { CS.heure = e.target.value; };
   $('#cs_lieu').onchange = e => { CS.lieu = e.target.value; };
@@ -6132,7 +6133,7 @@ function uploadMsg(e) {
 }
 
 /* ---------- feuille modale ---------- */
-let sheetClose = null, sheetDirty = false;
+let sheetClose = null, sheetDirty = false, sheetSaver = null;
 function openSheet(title, body, foot, onClose) {
   const sh = $('#sheet');
   sh.innerHTML = `<div class="scrim" data-close></div><div class="card" role="dialog" aria-modal="true" aria-label="${esc(title)}">
@@ -6141,6 +6142,7 @@ function openSheet(title, body, foot, onClose) {
   sh.querySelectorAll('.foot .btn.danger').forEach(b => { b.title = 'Supprimer'; b.setAttribute('aria-label', 'Supprimer'); });
   sh.hidden = false; document.body.style.overflow = 'hidden';
   sheetClose = onClose || null;
+  sheetSaver = null;
   sheetDirty = false;
   const bodyEl = sh.querySelector('.body');
   bodyEl.addEventListener('input', () => sheetDirty = true);
@@ -6152,24 +6154,37 @@ function openSheet(title, body, foot, onClose) {
 }
 function closeSheet(saved) {
   const sh = $('#sheet'); if (sh.hidden) return;
-  const cb = sheetClose; sheetClose = null; sheetDirty = false;
+  const cb = sheetClose; sheetClose = null; sheetSaver = null; sheetDirty = false;
   sh.hidden = true; sh.innerHTML = ''; document.body.style.overflow = '';
   if (cb) cb(!!saved);
 }
-function askConfirm(msg, okLabel) {
+function askConfirm(msg, okLabel, saveLabel) {
   return new Promise(resolve => {
     const ov = document.createElement('div');
     ov.className = 'confirm-ov';
-    ov.innerHTML = `<div class="confirm-box"><p>${esc(msg)}</p><div class="row" style="justify-content:flex-end;gap:8px;margin-top:4px"><button type="button" class="btn" id="cf_no">Continuer à modifier</button><button type="button" class="btn danger" id="cf_yes">${esc(okLabel || 'Fermer sans enregistrer')}</button></div></div>`;
+    ov.innerHTML = `<div class="confirm-box"><p>${esc(msg)}</p><div class="row" style="justify-content:flex-end;gap:8px;margin-top:4px">${saveLabel ? `<button type="button" class="btn primary" id="cf_save">${esc(saveLabel)}</button>` : ''}<button type="button" class="btn" id="cf_no">Continuer à modifier</button><button type="button" class="btn danger" id="cf_yes">${esc(okLabel || 'Fermer sans enregistrer')}</button></div></div>`;
     document.body.appendChild(ov);
     const done = v => { ov.remove(); resolve(v); };
-    ov.querySelector('#cf_no').onclick = () => done(false);
-    ov.querySelector('#cf_yes').onclick = () => done(true);
-    ov.addEventListener('click', e => { if (e.target === ov) done(false); });
+    ov.querySelector('#cf_no').onclick = () => done('stay');
+    ov.querySelector('#cf_yes').onclick = () => done('discard');
+    const sv = ov.querySelector('#cf_save'); if (sv) sv.onclick = () => done('save');
+    ov.addEventListener('click', e => { if (e.target === ov) done('stay'); });
   });
 }
+/* bouton d'enregistrement de la feuille ouverte (celui du pied de page), ou action dédiée */
+function sheetSaveBtn() { return $('#sheet .foot [id$="_save"]:not([disabled])'); }
 async function closeSheetGuarded() {
-  if (sheetDirty && !(await askConfirm('Tu as des modifications non enregistrées sur cette page.'))) return;
+  if (sheetDirty) {
+    const canSave = !!(sheetSaver || sheetSaveBtn());
+    const r = await askConfirm('Tu as des modifications non enregistrées sur cette page.', 'Fermer sans enregistrer', canSave ? 'Enregistrer et fermer' : '');
+    if (r === 'stay') return;
+    if (r === 'save') {
+      if (sheetSaver) { const f = sheetSaver; sheetSaver = null; await f(); closeSheet(); }
+      else { const b = sheetSaveBtn(); if (b) b.click(); }
+      return;
+    }
+    sheetSaver = null; sheetDirty = false;
+  }
   closeSheet();
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheetGuarded(); });
