@@ -2816,7 +2816,7 @@ async function init() {
   db.doc('visibilite/etat').onSnapshot(s => { S.visibilite = s.exists ? s.data() : {}; schedule(); }, onErr);
   for (const c of ['docs', 'expenses', 'services', 'freelancers', 'years', 'tri', 'fiscal', 'history', 'contacts', 'projects', 'templates', 'notes', 'pdocs', 'livrables', 'lieux', 'matos', 'checklists', 'bilans', 'refs', 'avis', 'produits', 'commandes', 'learnlog', 'demandes', 'notifs', 'docu', 'jeux', 'jeuxrep', 'modifs', 'rencontres']) {
     db.collection(c).onSnapshot(q => {
-      const m = new Map(); q.docs.forEach(d => m.set(d.id, { id: d.id, ...d.data() })); S[c] = m; S.loaded[c] = true; schedule();
+      const m = new Map(); q.docs.forEach(d => m.set(d.id, { id: d.id, ...d.data() })); S[c] = m; S.loaded[c] = true; schedule(); if (c === 'checklists') seedListes();
     }, onErr);
   }
 }
@@ -3895,22 +3895,60 @@ const LISTES = {
   'Événement': ['Horaire et plan de la journée reçus', 'Contact sur place', 'Batteries et cartes en double', 'Objectifs adaptés au lieu', 'Enregistreur audio de secours', 'Bouteille d’eau et collations', 'Sauvegarde des cartes le soir même', 'Liste des plans à ne pas manquer'],
   'Photo extérieure': ['Heure dorée et marée vérifiées', 'Batteries et cartes', 'Filtres et pare-soleil', 'Trépied', 'Vêtements et chaussures adaptés', 'Lampe frontale', 'Carte ou GPS du lieu', 'Autorisation ou accès confirmé'],
 };
-function viewListes() {
-  const inst = [...S.checklists.values()].sort((a, b) => (b.date || b.createdAt || '').localeCompare(a.date || a.createdAt || ''));
-  return `<div class="section-head"><h2>Listes de vérification</h2></div><p class="muted small" style="margin:-6px 0 12px">Choisis un modèle : la liste est copiée, tu la coches et tu peux la modifier.</p>
-  <div class="row" style="margin-bottom:14px">${Object.keys(LISTES).map(k => `<button class="btn" data-k="liste-new" data-tpl="${esc(k)}">${ic('plus')}${esc(k)}</button>`).join('')}</div>
-  <div class="panel list">${inst.length ? inst.map(l => { const n = (l.items || []).length, d = (l.items || []).filter(i => i.done).length; return `<button class="item" data-k="liste-open" data-id="${esc(l.id)}"><span class="t"><span class="name">${esc(l.title)}</span><span class="pill ${n && d === n ? 'good' : 'info'}">${d}/${n}</span></span><span class="r small muted">${l.date ? esc(fmtDateL(l.date)) : ''}</span><span class="m">${esc(l.tpl || '')}${l.projectId && S.projects.get(l.projectId) ? ' · ' + esc(S.projects.get(l.projectId).name) : ''}</span><span></span></button>`; }).join('') : '<div class="empty">Aucune liste. Touche un modèle ci-dessus.</div>'}</div>`;
+/* Modèles à sous-sections : une liste « modèle » est semée une seule fois dans la base (id fixe), puis dupliquée pour chaque tournage. */
+const LISTE_SECTIONS = {
+  'Réalisation': { id: 'modele_realisation_balado', title: 'Checklist réalisation : tournage de balado', sections: [
+    ['Préparation et contenu', ['Concept, ton et durée visée de l’épisode confirmés', 'Fiche d’invité.e : bio, sujets, prononciation des noms, contraintes', 'Plan d’entrevue ou rundown (intro, segments, conclusion, appel à l’action)', 'Brief envoyé à l’invité.e : date, heure, adresse, stationnement, tenue vestimentaire (éviter rayures fines, blanc pur, logos)', 'Formulaires de consentement et de cession de droits signés', 'Autorisations pour la musique, le lieu et les logos visibles']],
+    ['Repérage et lieu', ['Local calme : pas de réfrigérateur, ventilation, trafic ni écho', 'Traitement acoustique : couvertures, panneaux, tapis']],
+    ['Caméras et image', []], ['Éclairage', []], ['Son', []], ['Équipe et logistique', []], ['Au moment du tournage', []], ['Après le tournage', []]] },
+};
+function listeSeedItems(tpl) { const M = LISTE_SECTIONS[tpl]; return M ? M.sections.flatMap(([sec, ts]) => ts.map(t => ({ t, s: sec, k: sec + '|' + t, done: false }))) : (LISTES[tpl] || []).map(t => ({ t, done: false })); }
+let listeSeeding = false;
+async function seedListes() {
+  if (!db || readOnly || listeSeeding) return; listeSeeding = true;
+  try {
+    for (const [tpl, M] of Object.entries(LISTE_SECTIONS)) {
+      const path = 'checklists/' + M.id, snap = await db.doc(path).get(), want = listeSeedItems(tpl), now = new Date().toISOString();
+      if (!snap.exists) { await save(path, { title: M.title, tpl, modele: true, date: '', projectId: '', items: want, seedKeys: want.map(x => x.k), createdAt: now, updatedAt: now }); continue; }
+      const cur = snap.data(), seen = new Set(cur.seedKeys || []), add = want.filter(x => !seen.has(x.k));
+      if (add.length) await save(path, { ...cur, items: [...(cur.items || []), ...add], seedKeys: [...seen, ...add.map(x => x.k)], updatedAt: now });
+    }
+  } catch (e) { console.warn(e); } finally { listeSeeding = false; }
 }
-function newListe(tpl) { crud({ title: 'Nouvelle liste : ' + tpl, store: 'checklists', coll: 'checklists', req: ['title'], defaults: { title: tpl, date: today(), projectId: '' }, ok: 'Liste créée', fields: [{ k: 'title', label: 'Titre', wide: true }, { k: 'date', label: 'Date', type: 'date' }, { k: 'projectId', label: 'Projet', type: 'select', opts: projOpts() }], extra: () => ({ tpl, items: (LISTES[tpl] || []).map(t => ({ t, done: false })) }), done: id => setTimeout(() => openListe(id), 200) }); }
+function viewListes() {
+  const inst = [...S.checklists.values()].sort((a, b) => (b.modele ? 1 : 0) - (a.modele ? 1 : 0) || (b.date || b.createdAt || '').localeCompare(a.date || a.createdAt || ''));
+  return `<div class="section-head"><h2>Listes de vérification</h2></div><p class="muted small" style="margin:-6px 0 12px">Choisis un modèle : la liste est copiée, tu la coches et tu peux la modifier.</p>
+  <div class="row" style="margin-bottom:14px">${[...Object.keys(LISTES), ...Object.keys(LISTE_SECTIONS)].map(k => `<button class="btn" data-k="liste-new" data-tpl="${esc(k)}">${ic('plus')}${esc(k)}</button>`).join('')}</div>
+  <div class="panel list">${inst.length ? inst.map(l => { const n = (l.items || []).length, d = (l.items || []).filter(i => i.done).length; return `<button class="item" data-k="liste-open" data-id="${esc(l.id)}"><span class="t"><span class="name">${esc(l.title)}</span><span class="pill ${n && d === n ? 'good' : 'info'}">${d}/${n}</span>${l.modele ? '<span class="pill mute">Modèle</span>' : ''}</span><span class="r small muted">${l.date ? esc(fmtDateL(l.date)) : ''}</span><span class="m">${esc(l.tpl || '')}${l.projectId && S.projects.get(l.projectId) ? ' · ' + esc(S.projects.get(l.projectId).name) : ''}</span><span></span></button>`; }).join('') : '<div class="empty">Aucune liste. Touche un modèle ci-dessus.</div>'}</div>`;
+}
+function newListe(tpl) { crud({ title: 'Nouvelle liste : ' + tpl, store: 'checklists', coll: 'checklists', req: ['title'], defaults: { title: tpl, date: today(), projectId: '' }, ok: 'Liste créée', fields: [{ k: 'title', label: 'Titre', wide: true }, { k: 'date', label: 'Date', type: 'date' }, { k: 'projectId', label: 'Projet', type: 'select', opts: projOpts() }], extra: () => ({ tpl, items: listeSeedItems(tpl).map(({ t, s }) => s ? { t, s, done: false } : { t, done: false }) }), done: id => setTimeout(() => openListe(id), 200) }); }
+function dupListe(id) {
+  const l = S.checklists.get(id); if (!l) return;
+  crud({ title: 'Dupliquer : ' + l.title, store: 'checklists', coll: 'checklists', req: ['title'], defaults: { title: '', date: today(), projectId: '' }, ok: 'Liste dupliquée', fields: [{ k: 'title', label: 'Nom de l’épisode ou du tournage', wide: true, ph: 'Ex. : Épisode 12, Marie Tremblay' }, { k: 'date', label: 'Date du tournage', type: 'date' }, { k: 'projectId', label: 'Projet', type: 'select', opts: projOpts() }], extra: () => ({ tpl: l.tpl || '', items: (l.items || []).map(({ t, s }) => s ? { t, s, done: false } : { t, done: false }) }), done: nid => setTimeout(() => openListe(nid), 200) });
+}
 function openListe(id) {
-  const l = S.checklists.get(id); if (!l) return; let items = (l.items || []).map(x => ({ ...x }));
-  const draw = () => { const n = items.length, d = items.filter(i => i.done).length; $('#lst_box').innerHTML = `<p class="muted small" style="margin:0 0 8px">${d} sur ${n}${n && d === n ? ' : tout est prêt' : ''}</p><div class="tasks">${items.map((it, i) => `<div class="task${it.done ? ' done' : ''}"><input type="checkbox" data-li="${i}" ${it.done ? 'checked' : ''}><input type="text" data-lt="${i}" value="${esc(it.t)}"><button class="x" data-lx="${i}" aria-label="Retirer">${ic('trash')}</button></div>`).join('')}</div><div class="row" style="margin-top:8px"><input id="lst_new" class="pay-in" style="flex:1;min-width:0" placeholder="Ajouter un élément"><button class="btn" id="lst_add">${ic('plus')}</button></div>`; };
+  const l = S.checklists.get(id); if (!l) return; let items = (l.items || []).map(x => ({ ...x })); const closed = new Set();
+  const draw = () => {
+    const n = items.length, d = items.filter(i => i.done).length, sec = items.some(i => i.s), order = [];
+    items.forEach(i => { if (!order.includes(i.s || '')) order.push(i.s || ''); });
+    const prog = (a, b) => `<span class="prog" role="progressbar" aria-valuemin="0" aria-valuemax="${b}" aria-valuenow="${a}"><i style="width:${b ? Math.round(a / b * 100) : 0}%"></i></span>`;
+    const row = i => { const it = items[i]; return `<div class="task${it.done ? ' done' : ''}"><input type="checkbox" data-li="${i}" ${it.done ? 'checked' : ''} aria-label="Fait"><input type="text" data-lt="${i}" value="${esc(it.t)}"><button class="x" data-lx="${i}" aria-label="Retirer">${ic('trash')}</button></div>`; };
+    const idx = s => items.map((_, i) => i).filter(i => (items[i].s || '') === s);
+    const body = sec ? order.map(s => { const ix = idx(s), sd = ix.filter(i => items[i].done).length; return `<details class="ctrl-row" data-sec="${esc(s)}" ${closed.has(s) ? '' : 'open'}><summary><strong>${esc(s || 'Autres')}</strong><span class="pill ${sd === ix.length ? 'good' : 'info'}">${sd}/${ix.length}</span></summary><div style="padding:0 14px 12px">${prog(sd, ix.length)}<div class="tasks" style="margin-top:10px">${ix.map(row).join('')}</div></div></details>`; }).join('') : `<div class="tasks">${items.map((_, i) => row(i)).join('')}</div>`;
+    $('#lst_box').innerHTML = `<p class="muted small" style="margin:0 0 6px">${d}/${n} cochés${n && d === n ? ' : tout est prêt' : ''}</p>${prog(d, n)}<div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">${body}</div><div class="row" style="margin-top:12px">${sec ? `<select id="lst_sec" class="pay-in" aria-label="Section">${order.map(s => `<option value="${esc(s)}">${esc(s || 'Autres')}</option>`).join('')}</select>` : ''}<input id="lst_new" class="pay-in" style="flex:1;min-width:0" placeholder="Ajouter un élément"><button class="btn" id="lst_add">${ic('plus')}</button></div>`;
+  };
   const persist = async () => { const { id: _i, ...d } = S.checklists.get(id) || l; await save('checklists/' + id, { ...d, items, updatedAt: new Date().toISOString() }); };
-  openSheet(l.title, '<div id="lst_box"></div>', `<div class="row"><button class="btn danger" id="lst_del">${ic('trash')}<span>Supprimer</span></button></div><div class="row"><button class="btn primary" data-close>Fermer</button></div>`);
+  openSheet(l.title, '<div id="lst_box"></div>', `<div class="row">${l.modele ? '' : `<button class="btn danger" id="lst_del">${ic('trash')}<span>Supprimer</span></button>`}<button class="btn" id="lst_dup"><span>Dupliquer</span></button><button class="btn" id="lst_reset"><span>Réinitialiser</span></button></div><div class="row"><button class="btn primary" data-close>Fermer</button></div>`);
   draw(); const box = $('#lst_box');
+  box.addEventListener('toggle', e => { const s = e.target.dataset && e.target.dataset.sec; if (s != null) { if (e.target.open) closed.delete(s); else closed.add(s); } }, true);
   box.addEventListener('change', e => { const t = e.target; if (t.dataset.li != null) { items[+t.dataset.li].done = t.checked; draw(); persist(); } else if (t.dataset.lt != null) { items[+t.dataset.lt].t = t.value; persist(); } });
-  box.addEventListener('click', e => { const x = e.target.closest('[data-lx]'); if (x) { items.splice(+x.dataset.lx, 1); draw(); persist(); return; } if (e.target.closest('#lst_add')) { const v = $('#lst_new').value.trim(); if (v) { items.push({ t: v, done: false }); draw(); persist(); } } });
-  const del = $('#lst_del'); del.onclick = () => armDelete(del, async () => { if (await remove('checklists/' + id)) { closeSheet(true); toast('Liste supprimée'); } });
+  box.addEventListener('click', e => { const x = e.target.closest('[data-lx]'); if (x) { items.splice(+x.dataset.lx, 1); draw(); persist(); return; } if (e.target.closest('#lst_add')) { const v = $('#lst_new').value.trim(), sel = $('#lst_sec'); if (v) { items.push(sel && sel.value ? { t: v, s: sel.value, done: false } : { t: v, done: false }); draw(); persist(); } } });
+  const rs = $('#lst_reset'); rs.onclick = () => {
+    if (!rs.classList.contains('armed')) { rs.classList.add('armed'); rs.lastChild.textContent = 'Confirmer'; setTimeout(() => { if (rs.isConnected) { rs.classList.remove('armed'); rs.lastChild.textContent = 'Réinitialiser'; } }, 4000); return; }
+    rs.classList.remove('armed'); rs.lastChild.textContent = 'Réinitialiser'; items.forEach(i => { i.done = false; }); draw(); persist(); toast('Liste réinitialisée');
+  };
+  $('#lst_dup').onclick = () => dupListe(id);
+  const del = $('#lst_del'); if (del) del.onclick = () => armDelete(del, async () => { if (await remove('checklists/' + id)) { closeSheet(true); toast('Liste supprimée'); } });
 }
 function openBilan(id) { crud({ title: id ? 'Bilan de projet' : 'Nouveau bilan de projet', store: 'bilans', coll: 'bilans', id, req: ['title'], ok: 'Bilan enregistré', defaults: { date: today() }, fields: [
   { k: 'title', label: 'Titre', wide: true, ph: 'Ex. : Festival Western 2026' }, { k: 'projectId', label: 'Projet', type: 'select', opts: projOpts() }, { k: 'date', label: 'Date', type: 'date' },
