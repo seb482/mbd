@@ -355,6 +355,14 @@ select.year{appearance:none;background:var(--surface);border:1px solid var(--lin
 .vm-empty{margin:0;color:var(--muted)}
 .vm-card{padding:10px 12px;margin:0 0 8px;border:1px solid var(--line);border-left:5px solid var(--blue);border-radius:10px;background:var(--surface)}
 .vm-card.att{border-left-color:var(--orange);background:var(--orange-soft)}
+.vm-sw{position:relative;margin:0 0 8px;border-radius:10px;overflow:hidden}
+.vm-sw .vm-card{margin:0;position:relative;touch-action:pan-y;transition:transform .18s ease,opacity .18s ease}
+.vm-sw.drag .vm-card{transition:none}
+.vm-sw .vm-bg{position:absolute;inset:0;display:flex;align-items:center;padding:0 16px;font-weight:900;color:#fff;border-radius:10px}
+.vm-sw .vm-bg.del{background:#d64545;justify-content:flex-start}
+.vm-sw .vm-bg.arch{background:#3d6fd8;justify-content:flex-end}
+.vm-arch{margin-top:6px}.vm-arch summary{cursor:pointer;font-weight:800;color:var(--muted)}
+.vm-arch .vm-card{display:flex;gap:10px;align-items:center;justify-content:space-between}
 .vm-ct{font-weight:800}
 .vm-cd{margin-top:3px;font-size:15px;color:var(--ink);opacity:.9}
 .vm a{color:var(--blue-ink);font-weight:800;text-decoration:underline;text-underline-offset:3px}
@@ -2810,6 +2818,7 @@ async function init() {
   db.doc('learn/progress').onSnapshot(s => { S.learnP = s.exists ? s.data() : {}; schedule(); }, onErr);
   db.doc('config/reserve').onSnapshot(s => { S.reserve = s.exists ? s.data() : {}; schedule(); }, onErr);
   db.doc('board/weather').onSnapshot(s => { S.weather = s.exists ? s.data() : null; S.weatherReady = true; schedule(); }, onErr);
+  db.doc('config/veilleTri').onSnapshot(s => { S.vtri = s.exists ? (s.data().m || {}) : {}; schedule(); }, onErr);
   db.doc('board/veille').onSnapshot(s => { S.veille = s.exists ? s.data() : null; schedule(); }, onErr);
   db.doc('board/news').onSnapshot(s => { S.news = s.exists ? s.data() : null; schedule(); }, onErr);
   db.doc('board/newsFav').onSnapshot(s => { S.newsFav = s.exists ? s.data() : null; schedule(); }, onErr);
@@ -3146,14 +3155,56 @@ function bdVeilleHtml() {
   const dots = ev => ev && ev.id && ev._calId ? '<span class="evst vm-st" role="group" aria-label="Statut de l’événement">' + [['annule', 'Annulé'], ['report', 'Remis'], ['fait', 'Réalisé']].map(([k, l]) => '<button type="button" class="evb sm ' + k + '" data-b="ev-st" data-calid="' + esc(ev._calId) + '" data-eid="' + esc(ev.id) + '" data-st="' + k + '" aria-pressed="' + (evStatus(ev) === k) + '" aria-label="' + l + '" title="' + l + '"></button>').join('') + '</span>' : '';
   const agLi = (e, withSt) => { const ev = withSt ? evOf(e) : null, st = ev ? evStatus(ev) : ''; return '<li class="' + (st ? 'evs-' + st : '') + (ev ? ' hasst' : '') + '"><span class="vm-t">' + when(e) + '</span><span class="vm-x">' + link(e.u, esc(e.titre || '(sans titre)')) + (e.lieu ? ' <span class="vm-sub">' + esc(e.lieu) + '</span>' : '') + '</span>' + dots(ev) + '</li>'; };
   const agBlock = (label, items, withSt) => '<div class="vm-sec"><h4>' + label + '</h4>' + (items.length ? '<ul class="vm-ag">' + items.map(x => agLi(x, withSt)).join('') + '</ul>' : '<p class="vm-empty">Rien à l’agenda.</p>') + '</div>';
-  const attC = arr(V.attention).map(x => '<div class="vm-card att"><div class="vm-ct">' + link(x.u, esc(x.t || '')) + '</div>' + (x.detail ? '<div class="vm-cd">' + esc(clean(x.detail)) + '.</div>' : '') + '</div>').join('');
-  const mailC = arr(V.courriels).map(x => '<div class="vm-card"><div class="vm-ct">' + link(x.u, esc(x.t || '')) + (x.de ? ' <span class="vm-sub">' + esc(x.de) + '</span>' : '') + '</div>' + (x.resume ? '<div class="vm-cd">' + esc(clean(x.resume)) + '.</div>' : '') + '</div>').join('');
+  const TRI = S.vtri || {}, vk = (k, x) => V.date + '|' + k + '|' + String(x.u || '') + '|' + String(x.t || '');
+  const swipe = (k, html) => '<div class="vm-sw" data-vk="' + esc(k) + '"><div class="vm-bg del">Effacer</div><div class="vm-bg arch">Archiver</div>' + html + '</div>';
+  const items = [];
+  const attC = arr(V.attention).map(x => { const k = vk('a', x); items.push([k, x]); return TRI[k] ? '' : swipe(k, '<div class="vm-card att"><div class="vm-ct">' + link(x.u, esc(x.t || '')) + '</div>' + (x.detail ? '<div class="vm-cd">' + esc(clean(x.detail)) + '.</div>' : '') + '</div>'); }).join('');
+  const mailC = arr(V.courriels).map(x => { const k = vk('c', x); items.push([k, x]); return TRI[k] ? '' : swipe(k, '<div class="vm-card"><div class="vm-ct">' + link(x.u, esc(x.t || '')) + (x.de ? ' <span class="vm-sub">' + esc(x.de) + '</span>' : '') + '</div>' + (x.resume ? '<div class="vm-cd">' + esc(clean(x.resume)) + '.</div>' : '') + '</div>'); }).join('');
+  const archL = items.filter(([k]) => TRI[k] === 'arch');
+  const archC = archL.length ? '<details class="vm-arch"><summary>Archivées (' + archL.length + ')</summary>' + archL.map(([k, x]) => '<div class="vm-card"><div class="vm-ct">' + esc(x.t || '') + '</div><button type="button" class="btn" data-b="vm-restore" data-vk="' + esc(k) + '">Restaurer</button></div>').join('') + '</details>' : '';
   return '<div class="vm"><div class="vm-head"><h3>Veille du matin</h3>' + pill + '</div>'
     + (V.phrase ? '<p class="vm-phrase">' + esc(V.phrase) + '</p>' : '')
     + agBlock('Aujourd’hui', arr(V.agenda), V.date === today()) + agBlock('Demain', arr(V.demain))
     + (attC ? '<div class="vm-sec"><h4 class="att">À ton attention</h4>' + attC + '</div>' : '')
-    + (mailC ? '<div class="vm-sec"><h4>Courriels</h4>' + mailC + '</div>' : '') + '</div>';
+    + (mailC ? '<div class="vm-sec"><h4>Courriels</h4>' + mailC + '</div>' : '') + archC + '</div>';
 }
+async function vmSet(k, v) {
+  if (!db || readOnly) return;
+  const m = { ...(S.vtri || {}) };
+  if (v) m[k] = v; else delete m[k];
+  const ks = Object.keys(m); if (ks.length > 300) ks.slice(0, ks.length - 300).forEach(x => delete m[x]);
+  S.vtri = m; render();
+  await save('config/veilleTri', { m, updatedAt: new Date().toISOString() });
+}
+/* glisser une carte de la veille : vers la droite = effacer, vers la gauche = archiver */
+(function () {
+  let sw = null, lastDrag = 0;
+  document.addEventListener('pointerdown', e => {
+    const w = e.target.closest && e.target.closest('.vm-sw'); if (!w || readOnly || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    sw = { w, c: w.querySelector('.vm-card'), x: e.clientX, y: e.clientY, dx: 0, on: false, id: e.pointerId };
+  });
+  document.addEventListener('pointermove', e => {
+    if (!sw || e.pointerId !== sw.id) return;
+    const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+    if (!sw.on) { if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { sw = null; return; } if (Math.abs(dx) < 10) return; sw.on = true; sw.w.classList.add('drag'); try { sw.c.setPointerCapture(e.pointerId); } catch (er) {} }
+    sw.dx = dx; sw.c.style.transform = 'translateX(' + dx + 'px)';
+    sw.w.querySelector('.vm-bg.del').style.visibility = dx > 0 ? 'visible' : 'hidden';
+    sw.w.querySelector('.vm-bg.arch').style.visibility = dx < 0 ? 'visible' : 'hidden';
+  });
+  const end = async e => {
+    if (!sw || e.pointerId !== sw.id) return;
+    const { w, c, dx, on } = sw; sw = null; if (!on) return; lastDrag = Date.now();
+    w.classList.remove('drag');
+    const lim = Math.max(80, w.offsetWidth * 0.35);
+    if (Math.abs(dx) >= lim && e.type === 'pointerup') {
+      c.style.transform = 'translateX(' + (dx > 0 ? '110%' : '-110%') + ')'; c.style.opacity = '0';
+      const k = w.dataset.vk, act = dx > 0 ? 'del' : 'arch';
+      setTimeout(() => { vmSet(k, act); toast(act === 'del' ? 'Notification effacée' : 'Notification archivée'); }, 180);
+    } else c.style.transform = '';
+  };
+  document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
+  document.addEventListener('click', e => { if (Date.now() - lastDrag < 400 && e.target.closest && e.target.closest('.vm-sw')) { e.preventDefault(); e.stopPropagation(); } }, true);
+})();
 function bdOverlapsToday(e) {
   const t0 = today(), st = e.start || {}, en = e.end || {};
   if (st.date) return st.date <= t0 && (en.date || addDays(st.date, 1)) > t0;
@@ -3372,6 +3423,7 @@ document.addEventListener('click', async e => {
   else if (a === 'news-fav') { e.preventDefault(); await newsToggleFav(b.dataset.k); }
   else if (a === 'news-refresh') { const bt = $('#newsBtn'); if (bt) { bt.disabled = true; bt.textContent = 'Recherche des nouvelles…'; } const r = await echNews(true); if (bt) { bt.disabled = false; bt.textContent = 'Rafraîchir maintenant'; } toast(r === 'ok' ? 'Actualités mises à jour' : r === 'deja' ? 'Déjà à jour. La prochaine mise à jour automatique passe vers 6 h ou 15 h.' : r === 'aucun' ? 'Aucune nouvelle édition trouvée pour le moment.' : 'Impossible de lire les actualités (Google Drive non relié ici).'); }
   else if (a === 'cal-toggle') { S.bdCalOpen = !S.bdCalOpen; render(); }
+  else if (a === 'vm-restore') { e.preventDefault(); await vmSet(b.dataset.vk, null); }
   else if (a === 'ev-st') { e.preventDefault(); await evSetStatus(b.dataset.calid, b.dataset.eid, b.dataset.st); }
   else if (a === 'day-prev' || a === 'day-next' || a === 'day-today') { S.bdDate = a === 'day-today' ? '' : addDays(S.bdDate || bdIso(new Date()), a === 'day-prev' ? -1 : 1); render(); }
   else if (a === 'bd-lieu-new') openLieu(null);
