@@ -2818,7 +2818,7 @@ async function init() {
   db.doc('learn/progress').onSnapshot(s => { S.learnP = s.exists ? s.data() : {}; schedule(); }, onErr);
   db.doc('config/reserve').onSnapshot(s => { S.reserve = s.exists ? s.data() : {}; schedule(); }, onErr);
   db.doc('board/weather').onSnapshot(s => { S.weather = s.exists ? s.data() : null; S.weatherReady = true; schedule(); }, onErr);
-  db.doc('config/veilleTri').onSnapshot(s => { S.vtri = s.exists ? (s.data().m || {}) : {}; schedule(); }, onErr);
+  db.doc('config/veilleTri').onSnapshot(s => { S.vtri = s.exists ? (s.data().m || {}) : vmLocal(); schedule(); }, onErr);
   db.doc('board/veille').onSnapshot(s => { S.veille = s.exists ? s.data() : null; schedule(); }, onErr);
   db.doc('board/news').onSnapshot(s => { S.news = s.exists ? s.data() : null; schedule(); }, onErr);
   db.doc('board/newsFav').onSnapshot(s => { S.newsFav = s.exists ? s.data() : null; schedule(); }, onErr);
@@ -3155,7 +3155,7 @@ function bdVeilleHtml() {
   const dots = ev => ev && ev.id && ev._calId ? '<span class="evst vm-st" role="group" aria-label="Statut de l’événement">' + [['annule', 'Annulé'], ['report', 'Remis'], ['fait', 'Réalisé']].map(([k, l]) => '<button type="button" class="evb sm ' + k + '" data-b="ev-st" data-calid="' + esc(ev._calId) + '" data-eid="' + esc(ev.id) + '" data-st="' + k + '" aria-pressed="' + (evStatus(ev) === k) + '" aria-label="' + l + '" title="' + l + '"></button>').join('') + '</span>' : '';
   const agLi = (e, withSt) => { const ev = withSt ? evOf(e) : null, st = ev ? evStatus(ev) : ''; return '<li class="' + (st ? 'evs-' + st : '') + (ev ? ' hasst' : '') + '"><span class="vm-t">' + when(e) + '</span><span class="vm-x">' + link(e.u, esc(e.titre || '(sans titre)')) + (e.lieu ? ' <span class="vm-sub">' + esc(e.lieu) + '</span>' : '') + '</span>' + dots(ev) + '</li>'; };
   const agBlock = (label, items, withSt) => '<div class="vm-sec"><h4>' + label + '</h4>' + (items.length ? '<ul class="vm-ag">' + items.map(x => agLi(x, withSt)).join('') + '</ul>' : '<p class="vm-empty">Rien à l’agenda.</p>') + '</div>';
-  const TRI = S.vtri || {}, vk = (k, x) => V.date + '|' + k + '|' + String(x.u || '') + '|' + String(x.t || '');
+  const TRI = S.vtri || vmLocal(), vk = (k, x) => V.date + '|' + k + '|' + String(x.u || '') + '|' + String(x.t || '');
   const swipe = (k, html) => '<div class="vm-sw" data-vk="' + esc(k) + '"><div class="vm-bg del">Effacer</div><div class="vm-bg arch">Archiver</div>' + html + '</div>';
   const items = [];
   const attC = arr(V.attention).map(x => { const k = vk('a', x); items.push([k, x]); return TRI[k] ? '' : swipe(k, '<div class="vm-card att"><div class="vm-ct">' + link(x.u, esc(x.t || '')) + '</div>' + (x.detail ? '<div class="vm-cd">' + esc(clean(x.detail)) + '.</div>' : '') + '</div>'); }).join('');
@@ -3168,19 +3168,20 @@ function bdVeilleHtml() {
     + (attC ? '<div class="vm-sec"><h4 class="att">À ton attention</h4>' + attC + '</div>' : '')
     + (mailC ? '<div class="vm-sec"><h4>Courriels</h4>' + mailC + '</div>' : '') + archC + '</div>';
 }
+function vmLocal() { try { return JSON.parse(localStorage.getItem('bd.vtri') || '{}') || {}; } catch (e) { return {}; } }
 async function vmSet(k, v) {
-  if (!db || readOnly) return;
-  const m = { ...(S.vtri || {}) };
+  const m = { ...(S.vtri || vmLocal()) };
   if (v) m[k] = v; else delete m[k];
   const ks = Object.keys(m); if (ks.length > 300) ks.slice(0, ks.length - 300).forEach(x => delete m[x]);
   S.vtri = m; render();
-  await save('config/veilleTri', { m, updatedAt: new Date().toISOString() });
+  try { localStorage.setItem('bd.vtri', JSON.stringify(m)); } catch (e) {}
+  if (db && !readOnly) await save('config/veilleTri', { m, updatedAt: new Date().toISOString() });
 }
 /* glisser une carte de la veille : vers la droite = effacer, vers la gauche = archiver */
 (function () {
   let sw = null, lastDrag = 0;
   document.addEventListener('pointerdown', e => {
-    const w = e.target.closest && e.target.closest('.vm-sw'); if (!w || readOnly || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const w = e.target.closest && e.target.closest('.vm-sw'); if (!w || (e.pointerType === 'mouse' && e.button !== 0)) return;
     sw = { w, c: w.querySelector('.vm-card'), x: e.clientX, y: e.clientY, dx: 0, on: false, id: e.pointerId };
   });
   document.addEventListener('pointermove', e => {
