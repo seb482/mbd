@@ -1,5 +1,5 @@
 /* MBD autonome : fonctionne hors ligne. Version du cache à changer à chaque mise à jour de l'app. */
-var V = 'mbd-v3';
+var V = 'mbd-v4';
 var SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(V).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); })); });
 self.addEventListener('activate', function (e) { e.waitUntil(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k !== V; }).map(function (k) { return caches.delete(k); })); }).then(function () { return self.clients.claim(); })); });
@@ -21,8 +21,14 @@ self.addEventListener('fetch', function (e) {
   }
   if (e.request.method !== 'GET') return;
   if (u.origin === location.origin) {
-    /* page et fichiers de l'app : réseau d'abord (mises à jour), sinon copie locale */
-    e.respondWith(fetch(e.request).then(function (r) { var cp = r.clone(); caches.open(V).then(function (c) { c.put(e.request, cp); }); return r; }).catch(function () { return caches.match(e.request).then(function (m) { return m || caches.match(new URL('index.html', self.registration.scope).href); }); }));
+    /* page et fichiers de l'app : copie locale d'abord (affichage immédiat), mise à jour en arrière-plan pour la prochaine ouverture */
+    e.respondWith(caches.open(V).then(function (c) {
+      return c.match(e.request).then(function (m) {
+        var net = fetch(e.request).then(function (r) { if (r.ok) c.put(e.request, r.clone()); return r; });
+        if (m) { net.catch(function () {}); return m; }
+        return net.catch(function () { return c.match(new URL('index.html', self.registration.scope).href); });
+      });
+    }));
     return;
   }
   /* polices et autres ressources externes : copie locale d'abord */

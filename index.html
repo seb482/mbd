@@ -111,8 +111,9 @@
 <title>Mon Bras Droit</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@1,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@1,400&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@1,400&display=swap"></noscript>
 <style>
 :root{
   --bg:#F3F5F6; --surface:#FFFFFF; --surface-2:#EDF1F3; --ink:#1A1F24; --muted:#5B666F; --line:#DCE2E6;
@@ -2820,7 +2821,8 @@ async function init() {
     }, onErr);
   }
 }
-let raf = 0; function schedule() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); }
+/* Rendu regroupé : les collections arrivent une à une au démarrage ; on évite de reconstruire la vue à chaque arrivée. */
+let raf = 0, lastRender = 0; function schedule() { if (raf) return; const wait = Math.max(0, lastRender + 150 - performance.now()); raf = setTimeout(() => { raf = requestAnimationFrame(() => { raf = 0; lastRender = performance.now(); render(); }); }, wait); }
 function showBanner(msg, cls = '') { $('#banner').innerHTML = msg ? `<div class="banner ${cls}">${esc(msg)}</div>` : ''; }
 async function save(path, data) {
   if (readOnly) { toast('Lecture seule : modification impossible.'); return false; }
